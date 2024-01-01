@@ -1,0 +1,15 @@
+[package]
+name = "lice-scope"
+description = "Graphical lice inspection tool"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lice = { path = "../lice" }
+egui_graphs = { version = "0.17.1", features = [ "egui_persistence" ] }
+egui = { version = "0.24.1", features = [ "persistence" ] }
+eframe = { version = "0.24.1" }
+petgraph = { version = "0.6.4" }
+clap = { version = "4.4.12", features = ["derive"] }
