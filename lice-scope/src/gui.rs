@@ -137,6 +137,7 @@ impl From<EdgeProps<GuiEdge>> for EdgeShape {
                 GuiEdge::Fun => Color32::RED,
                 GuiEdge::Arg => Color32::DARK_RED,
                 GuiEdge::Ind => Color32::BLUE,
+                GuiEdge::Arr => Color32::GREEN,
             },
         )
     }
