@@ -4,22 +4,109 @@ use egui::{
     Color32, FontFamily, FontId, Pos2, Shape, Stroke, Vec2,
 };
 use egui_graphs::{
-    DefaultEdgeShape, DefaultNodeShape, DisplayEdge, DisplayNode, DrawContext, EdgeProps, Graph,
-    Node, NodeProps,
+    default_edge_transform, to_graph_custom, DefaultEdgeShape, DefaultNodeShape, DisplayEdge,
+    DisplayNode, DrawContext, EdgeProps, Graph, Node, NodeProps,
 };
-use lice::graph::{CombEdge, CombIx, CombNode, CombTy};
+use lice::{
+    comb::{Cell, Index, Program},
+    graph::{CombEdge, CombIx, CombNode, CombTy},
+};
+
+pub type GuiNode = CombNode<NodeMetadata>;
+pub type GuiEdge = CombEdge;
 
 /// GUI for [`lice::graph::CombGraph`].
-pub type GuiCombGraph = Graph<CombNode, CombEdge, CombTy, CombIx, CombNodeShape, CombEdgeShape>;
+pub type GuiGraph = Graph<GuiNode, GuiEdge, CombTy, CombIx, NodeShape, EdgeShape>;
+
+/// Cell metadata, acquired while parsing the combinator file.
+///
+/// The data in here is strictly optional, and can always be discarded when serializing cells.
+#[derive(Debug, Clone, Default)]
+pub struct NodeMetadata {
+    /// Distance to a leaf
+    pub height: usize,
+    /// Distance to root
+    pub depth: usize,
+    /// Horizontal position
+    pub x_pos: f32,
+}
+
+fn build_metadata(p: &Program) -> Vec<NodeMetadata> {
+    let mut metadata = Vec::new();
+    metadata.resize_with(p.body.len(), Default::default);
+    let mut x_pos = 1.0;
+    build_meta(p, &mut metadata, &mut x_pos, p.root, 0);
+    metadata
+}
+
+fn build_meta(
+    p: &Program,
+    metadata: &mut Vec<NodeMetadata>,
+    x_pos: &mut f32,
+    i: Index,
+    depth: usize,
+) {
+    metadata[i].depth = depth;
+
+    match &p.body[i] {
+        Cell::App(f, _, a) => {
+            let (f, a) = (*f, *a);
+            build_meta(p, metadata, x_pos, f, depth + 1);
+            build_meta(p, metadata, x_pos, a, depth + 1);
+
+            metadata[i].height = usize::max(metadata[f].height, metadata[a].height);
+            metadata[i].x_pos = (metadata[f].x_pos + metadata[a].x_pos) / 2.0;
+        }
+        Cell::Array(_, arr) => {
+            let mut h = 0;
+            let mut x = 0.0;
+            for &a in arr {
+                build_meta(p, metadata, x_pos, a, depth + 1);
+                h = h.max(metadata[i].height);
+                x += metadata[i].x_pos;
+            }
+            metadata[i].height = h;
+            metadata[i].x_pos = x / arr.len() as f32;
+        }
+        _ => {
+            metadata[i].height = 0;
+            metadata[i].x_pos = *x_pos;
+            *x_pos += 1.0;
+        }
+    }
+}
+
+pub fn to_gui_graph(p: Program) -> GuiGraph {
+    let metadata = build_metadata(&p);
+    to_graph_custom(
+        &p.to_graph()
+            .g
+            .map(|_, n| n.map(|&i| metadata[i].clone()), |_, &e| e),
+        |ni, n| {
+            let mut node = Node::new(n.clone());
+            node.set_label(n.cell.to_string());
+            node.bind(
+                ni,
+                // NOTE: vertical pos is inverted
+                Pos2::new(
+                    node.payload().meta.x_pos * 50.0,
+                    node.payload().meta.depth as f32 * 50.0,
+                ),
+            );
+            node
+        },
+        default_edge_transform,
+    )
+}
 
 #[derive(Debug, Clone)]
-pub struct CombNodeShape(DefaultNodeShape);
+pub struct NodeShape(DefaultNodeShape);
 
 #[derive(Debug, Clone)]
-pub struct CombEdgeShape(DefaultEdgeShape, Color32);
+pub struct EdgeShape(DefaultEdgeShape, Color32);
 
-impl From<NodeProps<CombNode>> for CombNodeShape {
-    fn from(props: NodeProps<CombNode>) -> Self {
+impl From<NodeProps<GuiNode>> for NodeShape {
+    fn from(props: NodeProps<GuiNode>) -> Self {
         Self(DefaultNodeShape {
             pos: props.location,
             selected: props.selected,
@@ -30,8 +117,8 @@ impl From<NodeProps<CombNode>> for CombNodeShape {
     }
 }
 
-impl From<EdgeProps<CombEdge>> for CombEdgeShape {
-    fn from(props: EdgeProps<CombEdge>) -> Self {
+impl From<EdgeProps<GuiEdge>> for EdgeShape {
+    fn from(props: EdgeProps<GuiEdge>) -> Self {
         let s = DefaultEdgeShape {
             order: props.order,
             selected: props.selected,
@@ -47,15 +134,15 @@ impl From<EdgeProps<CombEdge>> for CombEdgeShape {
         Self(
             s,
             match props.payload {
-                CombEdge::Fun => Color32::RED,
-                CombEdge::Arg => Color32::DARK_RED,
-                CombEdge::Ind => Color32::BLUE,
+                GuiEdge::Fun => Color32::RED,
+                GuiEdge::Arg => Color32::DARK_RED,
+                GuiEdge::Ind => Color32::BLUE,
             },
         )
     }
 }
 
-impl DisplayNode<CombNode, CombEdge, CombTy, CombIx> for CombNodeShape {
+impl DisplayNode<GuiNode, GuiEdge, CombTy, CombIx> for NodeShape {
     fn shapes(&mut self, ctx: &DrawContext) -> Vec<egui::Shape> {
         let style = match self.0.selected || self.0.dragged {
             true => ctx.ctx.style().visuals.widgets.active,
@@ -75,31 +162,29 @@ impl DisplayNode<CombNode, CombEdge, CombTy, CombIx> for CombNodeShape {
         vec![label_shape.into()]
     }
 
-    fn update(&mut self, state: &NodeProps<CombNode>) {
-        <DefaultNodeShape as DisplayNode<CombNode, CombEdge, CombTy, CombIx>>::update(
+    fn update(&mut self, state: &NodeProps<GuiNode>) {
+        <DefaultNodeShape as DisplayNode<GuiNode, GuiEdge, CombTy, CombIx>>::update(
             &mut self.0,
             state,
         );
     }
 
     fn closest_boundary_point(&self, dir: egui::Vec2) -> egui::Pos2 {
-        <DefaultNodeShape as DisplayNode<CombNode, CombEdge, CombTy, CombIx>>::closest_boundary_point(
+        <DefaultNodeShape as DisplayNode<GuiNode, GuiEdge, CombTy, CombIx>>::closest_boundary_point(
             &self.0, dir,
         )
     }
 
     fn is_inside(&self, pos: egui::Pos2) -> bool {
-        <DefaultNodeShape as DisplayNode<CombNode, CombEdge, CombTy, CombIx>>::is_inside(
-            &self.0, pos,
-        )
+        <DefaultNodeShape as DisplayNode<GuiNode, GuiEdge, CombTy, CombIx>>::is_inside(&self.0, pos)
     }
 }
 
-impl DisplayEdge<CombNode, CombEdge, CombTy, CombIx, CombNodeShape> for CombEdgeShape {
+impl DisplayEdge<GuiNode, GuiEdge, CombTy, CombIx, NodeShape> for EdgeShape {
     fn shapes(
         &mut self,
-        start: &Node<CombNode, CombEdge, CombTy, CombIx, CombNodeShape>,
-        end: &Node<CombNode, CombEdge, CombTy, CombIx, CombNodeShape>,
+        start: &Node<GuiNode, GuiEdge, CombTy, CombIx, NodeShape>,
+        end: &Node<GuiNode, GuiEdge, CombTy, CombIx, NodeShape>,
         ctx: &DrawContext,
     ) -> Vec<egui::Shape> {
         let color = match self.0.selected {
@@ -163,8 +248,8 @@ impl DisplayEdge<CombNode, CombEdge, CombTy, CombIx, CombNodeShape> for CombEdge
         vec![line, line_tip]
     }
 
-    fn update(&mut self, state: &EdgeProps<CombEdge>) {
-        <DefaultEdgeShape as DisplayEdge<CombNode, CombEdge, CombTy, CombIx, CombNodeShape>>::update(
+    fn update(&mut self, state: &EdgeProps<GuiEdge>) {
+        <DefaultEdgeShape as DisplayEdge<GuiNode, GuiEdge, CombTy, CombIx, NodeShape>>::update(
             &mut self.0,
             state,
         );
@@ -172,13 +257,13 @@ impl DisplayEdge<CombNode, CombEdge, CombTy, CombIx, CombNodeShape> for CombEdge
 
     fn is_inside(
         &self,
-        start: &Node<CombNode, CombEdge, CombTy, CombIx, CombNodeShape>,
-        end: &Node<CombNode, CombEdge, CombTy, CombIx, CombNodeShape>,
+        start: &Node<GuiNode, GuiEdge, CombTy, CombIx, NodeShape>,
+        end: &Node<GuiNode, GuiEdge, CombTy, CombIx, NodeShape>,
         pos: egui::Pos2,
     ) -> bool {
-        <DefaultEdgeShape as DisplayEdge<CombNode, CombEdge, CombTy, CombIx, CombNodeShape>>::is_inside(
-            &self.0,
-            start, end, pos)
+        <DefaultEdgeShape as DisplayEdge<GuiNode, GuiEdge, CombTy, CombIx, NodeShape>>::is_inside(
+            &self.0, start, end, pos,
+        )
     }
 }
 

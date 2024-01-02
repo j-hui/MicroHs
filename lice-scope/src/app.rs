@@ -1,17 +1,14 @@
 use std::{fs::File, io::Read, path::PathBuf, str::FromStr};
 
 use eframe::{run_native, App, CreationContext};
-use egui::{Context, Pos2};
-use egui_graphs::{
-    default_edge_transform, to_graph_custom, GraphView, Node, SettingsInteraction,
-    SettingsNavigation, SettingsStyle,
-};
+use egui::Context;
+use egui_graphs::{GraphView, SettingsInteraction, SettingsNavigation, SettingsStyle};
 use lice::comb::CombFile;
 
-use crate::gui::{CombEdgeShape, CombNodeShape, GuiCombGraph};
+use crate::gui::{to_gui_graph, EdgeShape, GuiGraph, NodeShape};
 
 pub struct CombApp {
-    g: GuiCombGraph,
+    g: GuiGraph,
     filename: PathBuf,
 }
 
@@ -21,22 +18,7 @@ impl CombApp {
         let mut f = File::open(&filename).unwrap();
         f.read_to_string(&mut buf).unwrap();
         let c = CombFile::from_str(&buf).unwrap();
-
-        let g = to_graph_custom(
-            &c.program.to_graph(),
-            |ni, n| {
-                let mut node = Node::new(n.clone());
-                node.set_label(n.cell.to_string());
-                node.bind(
-                    ni,
-                    // NOTE: vertical pos is inverted
-                    Pos2::new(n.meta.x_pos * 50.0, n.meta.depth as f32 * 50.0),
-                );
-                node
-            },
-            default_edge_transform,
-        );
-
+        let g = to_gui_graph(c.program);
         Self { g, filename }
     }
 
@@ -55,7 +37,7 @@ impl App for CombApp {
     fn update(&mut self, ctx: &Context, _: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add(
-                &mut GraphView::<_, _, _, _, CombNodeShape, CombEdgeShape>::new(&mut self.g)
+                &mut GraphView::<_, _, _, _, NodeShape, EdgeShape>::new(&mut self.g)
                     .with_interactions(&SettingsInteraction::new().with_dragging_enabled(true))
                     .with_styles(&SettingsStyle::new().with_labels_always(true))
                     .with_navigations(
