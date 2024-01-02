@@ -18,6 +18,7 @@ impl CombApp {
         f.read_to_string(&mut buf).unwrap();
         let c = CombFile::from_str(&buf).unwrap();
         let g = to_gui_graph(&c.program);
+
         Self { g }
     }
 

@@ -26,16 +26,16 @@ pub struct Program {
     // The root combinator expression
     pub root: Index,
 
-    /// `Map<Index, Cell>`
-    pub body: Vec<Cell>,
+    /// `Map<Index, Expr>`
+    pub body: Vec<Expr>,
 
     /// `Map<Label, Index>`
     pub defs: Vec<Index>,
 }
 
 #[derive(Debug, Clone, Display)]
-pub enum Cell {
-    /// Application of two cells, with possible definition label: i.e., `(func [:label] arg)`.
+pub enum Expr {
+    /// Application of two expressions, with possible definition label: i.e., `(func [:label] arg)`.
     #[display("@")]
     App(Index, Option<Label>, Index),
     /// Floating point literal, i.e., `&float`.
@@ -44,7 +44,7 @@ pub enum Cell {
     /// Integer literal, possibly negative, i.e., `#[-]int`.
     #[display("#{0}")]
     Int(Int),
-    /// Fixed size array of cells, i.e., `[size arr]`.
+    /// Fixed size array of expressions, i.e., `[size arr]`.
     #[display("[{0}]")]
     Array(usize, Vec<Index>),
     /// Reference to some labeled definition, i.e., `_label`.
@@ -307,7 +307,7 @@ impl std::fmt::Display for Program {
 impl Program {
     fn fmt_expr(&self, out: &mut std::fmt::Formatter<'_>, idx: Index) -> std::fmt::Result {
         match self.body.get(idx).ok_or(std::fmt::Error)? {
-            Cell::App(f, l, a) => {
+            Expr::App(f, l, a) => {
                 write!(out, "(")?;
                 self.fmt_expr(out, *f)?;
                 write!(out, " ")?;
@@ -317,7 +317,7 @@ impl Program {
                 self.fmt_expr(out, *a)?;
                 write!(out, ")")
             }
-            Cell::Array(sz, arr) => {
+            Expr::Array(sz, arr) => {
                 // assert!(sz == arr.len());
                 write!(out, "[{sz}")?;
                 for a in arr {
@@ -326,7 +326,7 @@ impl Program {
                 }
                 write!(out, "]")
             }
-            Cell::String(s) => {
+            Expr::String(s) => {
                 write!(out, "\"")?;
                 for c in s.chars() {
                     if c.is_ascii_graphic() || c == ' ' {
@@ -337,7 +337,7 @@ impl Program {
                 }
                 write!(out, "\"")
             }
-            Cell::Tick(s) => {
+            Expr::Tick(s) => {
                 write!(out, "!\"")?;
                 for c in s.chars() {
                     if c.is_ascii_graphic() || c == ' ' {
@@ -348,9 +348,9 @@ impl Program {
                 }
                 write!(out, "\"")
             }
-            cell => {
-                // Cell's derived Display implementation is sufficient
-                write!(out, "{}", cell)
+            expr => {
+                // `Expr's derived Display implementation is sufficient
+                write!(out, "{}", expr)
             }
         }
     }
@@ -415,10 +415,10 @@ mod tests {
     #[test]
     fn display_program() {
         // An arbitrarily constructed test case, deliberately featuring:
-        // - at least one of each type of cell
+        // - at least one of each type of expr
         // - a root that doesn't have the last index
         // - negative floating and integer literals
-        // - two app cells that point to the same cell (without indirection)
+        // - two app exprs that point to the same expr (without indirection)
         // - an otherwise confounding tree structure
         let p = CombFile {
             version: (6, 19),
@@ -426,22 +426,22 @@ mod tests {
             program: Program {
                 root: 10,
                 body: vec![
-                    /* 0 */ Cell::Prim(Prim::Combinator(Combinator::K4)),
-                    /* 1 */ Cell::Prim(Prim::Combinator(Combinator::CCB)),
-                    /* 2 */ Cell::Prim(Prim::IO(IO::Bind)),
-                    /* 3 */ Cell::Int(-42),
-                    /* 4 */ Cell::Float(-4.2),
-                    /* 5 */ Cell::String("Hello world!\r\n".to_string()),
-                    /* 6 */ Cell::Tick("Lyme's".to_string()),
-                    /* 7 */ Cell::Ffi("fork".to_string()),
-                    /* 8 */ Cell::Array(5, vec![3, 4, 5, 6, 7]),
-                    /* 9 */ Cell::Ffi("UNREACHABLE!".to_string()),
-                    /* 10 */ Cell::App(2, Some(0), 13),
-                    /* 11 */ Cell::App(10, None, 14),
-                    /* 12 */ Cell::App(1, None, 2),
-                    /* 13 */ Cell::App(8, None, 0),
-                    /* 14 */ Cell::App(12, None, 15),
-                    /* 15 */ Cell::Ref(0),
+                    /* 0 */ Expr::Prim(Prim::Combinator(Combinator::K4)),
+                    /* 1 */ Expr::Prim(Prim::Combinator(Combinator::CCB)),
+                    /* 2 */ Expr::Prim(Prim::IO(IO::Bind)),
+                    /* 3 */ Expr::Int(-42),
+                    /* 4 */ Expr::Float(-4.2),
+                    /* 5 */ Expr::String("Hello world!\r\n".to_string()),
+                    /* 6 */ Expr::Tick("Lyme's".to_string()),
+                    /* 7 */ Expr::Ffi("fork".to_string()),
+                    /* 8 */ Expr::Array(5, vec![3, 4, 5, 6, 7]),
+                    /* 9 */ Expr::Ffi("UNREACHABLE!".to_string()),
+                    /* 10 */ Expr::App(2, Some(0), 13),
+                    /* 11 */ Expr::App(10, None, 14),
+                    /* 12 */ Expr::App(1, None, 2),
+                    /* 13 */ Expr::App(8, None, 0),
+                    /* 14 */ Expr::App(12, None, 15),
+                    /* 15 */ Expr::Ref(0),
                 ],
                 defs: vec![],
             },

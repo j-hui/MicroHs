@@ -1,5 +1,5 @@
 //! Combinator file parser.
-use crate::comb::{Cell, CombFile, Index, Label, Prim, Program};
+use crate::comb::{CombFile, Expr, Index, Label, Prim, Program};
 use nom::{
     branch::alt,
     bytes::complete::{is_not, tag},
@@ -14,6 +14,8 @@ use std::str::FromStr;
 
 /// The result of parsing. A parser monad, even. Typedef'd here for convenience.
 type Parse<'a, T> = IResult<&'a str, T>;
+
+const NIL_INDEX: Index = Index::MAX;
 
 fn uinteger(i: &str) -> Parse<usize> {
     map_res(digit1, |s: &str| s.parse::<usize>()).parse(i)
@@ -80,8 +82,6 @@ impl CombFile {
     }
 }
 
-const NIL_INDEX: Index = Index::MAX;
-
 impl Program {
     fn parse(i: &str, size: usize) -> Parse<Self> {
         let mut p = Self {
@@ -91,7 +91,7 @@ impl Program {
         };
         p.defs.resize(size, NIL_INDEX);
 
-        let (i, root) = p.parse_cell(i)?;
+        let (i, root) = p.parse_expr(i)?;
         p.root = root;
 
         for (label, &def) in p.defs.iter().enumerate() {
@@ -102,7 +102,7 @@ impl Program {
         Ok((i, p))
     }
 
-    fn parse_cell<'i>(&mut self, i: &'i str) -> Parse<'i, Index> {
+    fn parse_expr<'i>(&mut self, i: &'i str) -> Parse<'i, Index> {
         let prim_token = recognize(many1_count(alt((
             // Characters that possibly appear in a primitive identifier
             alphanumeric1,
@@ -122,26 +122,26 @@ impl Program {
 
         let i = multispace0(i)?.0;
         let (i, c) = if let Ok((i, (f, l, a))) = self.parse_app(i) {
-            (i, (Cell::App(f, l, a)))
+            (i, (Expr::App(f, l, a)))
         } else if let Ok((i, (sz, arr))) = self.parse_array(i) {
-            (i, (Cell::Array(sz, arr)))
+            (i, (Expr::Array(sz, arr)))
         } else {
             alt((
-                preceded(char('&'), double).map(Cell::Float),
-                preceded(char('#'), integer).map(Cell::Int),
-                preceded(char('_'), uinteger).map(Cell::Ref),
-                string_literal.map(Cell::String),
-                preceded(char('!'), string_literal).map(Cell::Tick),
+                preceded(char('&'), double).map(Expr::Float),
+                preceded(char('#'), integer).map(Expr::Int),
+                preceded(char('_'), uinteger).map(Expr::Ref),
+                string_literal.map(Expr::String),
+                preceded(char('!'), string_literal).map(Expr::Tick),
                 preceded(char('^'), alphanumeric1) // NOTE: this accepts identifiers like ^1piece
                     .map(String::from)
-                    .map(Cell::Ffi),
+                    .map(Expr::Ffi),
                 prim_token.map(|s| {
                     if let Ok(p) = Prim::from_str(s) {
-                        Cell::Prim(p)
+                        Expr::Prim(p)
                     } else {
-                        Cell::Unknown(s.to_string())
+                        Expr::Unknown(s.to_string())
                     }
-                }), // Cell::Prim),
+                }),
             ))
             .parse(i)?
         };
@@ -157,11 +157,11 @@ impl Program {
     fn parse_app<'i>(&mut self, i: &'i str) -> Parse<'i, (Index, Option<Label>, Index)> {
         let i = char('(')(i)?.0;
         let i = multispace0(i)?.0;
-        let (i, f) = self.parse_cell(i)?;
+        let (i, f) = self.parse_expr(i)?;
         let i = multispace0(i)?.0;
         let (i, label) = opt(preceded(char(':'), uinteger))(i)?; // possible :def
         let i = multispace0(i)?.0;
-        let (i, a) = self.parse_cell(i)?;
+        let (i, a) = self.parse_expr(i)?;
         let i = multispace0(i)?.0;
         let i = char(')')(i)?.0;
 
@@ -188,7 +188,7 @@ impl Program {
                 // assert that the vector is large enough?
                 return Ok((i, (sz, v)));
             }
-            let (i, c) = self.parse_cell(i)?;
+            let (i, c) = self.parse_expr(i)?;
             v.push(c);
             ii = i;
         }

@@ -8,8 +8,8 @@ use egui_graphs::{
     DisplayNode, DrawContext, EdgeProps, Graph, Node, NodeProps,
 };
 use lice::{
-    comb::{Cell, Index, Program},
-    graph::{CombEdge, CombIx, CombNode, CombTy},
+    comb::{Expr, Index, Program},
+    graph::{CombEdge, CombGraph, CombIx, CombNode, CombTy},
 };
 
 pub type GuiNode = CombNode<NodeMetadata>;
@@ -49,7 +49,7 @@ fn build_meta(
     metadata[i].depth = depth;
 
     match &p.body[i] {
-        Cell::App(f, _, a) => {
+        Expr::App(f, _, a) => {
             let (f, a) = (*f, *a);
             build_meta(p, metadata, x_pos, f, depth + 1);
             build_meta(p, metadata, x_pos, a, depth + 1);
@@ -57,7 +57,7 @@ fn build_meta(
             metadata[i].height = usize::max(metadata[f].height, metadata[a].height);
             metadata[i].x_pos = (metadata[f].x_pos + metadata[a].x_pos) / 2.0;
         }
-        Cell::Array(_, arr) => {
+        Expr::Array(_, arr) => {
             let mut h = 0;
             let mut x = 0.0;
             for &a in arr {
@@ -76,15 +76,15 @@ fn build_meta(
     }
 }
 
-pub fn to_gui_graph(p: Program) -> GuiGraph {
-    let metadata = build_metadata(&p);
+pub fn to_gui_graph(p: &Program) -> GuiGraph {
+    let metadata = build_metadata(p);
+    let g = CombGraph::from(p);
+    g.print_leaves();
     to_graph_custom(
-        &p.to_graph()
-            .g
-            .map(|_, n| n.map(|&i| metadata[i].clone()), |_, &e| e),
+        &g.g.map(|_, n| n.map(|&i| metadata[i].clone()), |_, &e| e),
         |ni, n| {
             let mut node = Node::new(n.clone());
-            node.set_label(n.cell.to_string());
+            node.set_label(n.expr.to_string());
             node.bind(
                 ni,
                 // NOTE: vertical pos is inverted
