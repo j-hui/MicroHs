@@ -1,16 +1,18 @@
-use crate::comb::{Expr, Index, Program};
+use std::{cell::Cell, mem};
+
+use crate::comb::{Expr, Index, Prim, Program};
 use petgraph::{
     stable_graph::{DefaultIx, NodeIndex, StableGraph},
-    visit::Dfs,
+    visit::{Dfs, EdgeRef, VisitMap, Visitable},
     Directed,
-    Direction::Outgoing,
+    Direction::{Incoming, Outgoing},
 };
 
 #[derive(Debug, Clone)]
 pub struct CombNode<T> {
     pub expr: Expr,
-    pub reachable: bool,
-    pub redex: bool,
+    pub reachable: Cell<bool>,
+    pub redex: Cell<bool>,
     pub meta: T,
 }
 
@@ -18,8 +20,8 @@ impl<T> CombNode<T> {
     pub fn map<U>(&self, f: impl FnOnce(&T) -> U) -> CombNode<U> {
         CombNode {
             expr: self.expr.clone(),
-            reachable: self.reachable,
-            redex: self.redex,
+            reachable: self.reachable.clone(),
+            redex: self.redex.clone(),
             meta: f(&self.meta),
         }
     }
@@ -48,15 +50,13 @@ impl<T> CombGraph<T> {
     ///
     /// First marks everything unreachable, then marks reachable nodes through DFS.
     pub fn mark(&mut self) {
-        // TODO: is there really no better way to do this?
-        let nxs = self.g.node_indices().collect::<Vec<NodeIndex>>();
-        for nx in nxs {
-            self.g.node_weight_mut(nx).unwrap().reachable = false;
+        for n in self.g.node_weights_mut() {
+            n.reachable.set(false);
         }
 
         let mut dfs = Dfs::new(&self.g, self.root);
         while let Some(nx) = dfs.next(&self.g) {
-            self.g[nx].reachable = true;
+            self.g[nx].reachable.set(true);
         }
     }
 
@@ -67,12 +67,52 @@ impl<T> CombGraph<T> {
     /// (memory-hungry) compile-time analysis anyway.
     pub fn gc(&mut self) {
         self.mark();
-        self.g.retain_nodes(|g, nx| g[nx].reachable);
+        self.g.retain_nodes(|g, nx| g[nx].reachable.get());
+    }
+
+    pub fn mark_redexes(&mut self) {
+        let mut visited = self.g.visit_map();
+
+        for nx in self.g.externals(Outgoing) {
+            let Expr::Prim(Prim::Combinator(comb)) = &self.g[nx].expr else {
+                continue;
+            };
+
+            let mut more = vec![nx];
+
+            for _ in 0..comb.arity() {
+                let nodes: Vec<NodeIndex> = mem::take(&mut more);
+                for nx in nodes {
+                    if visited.is_visited(&nx) {
+                        continue;
+                    }
+                    visited.visit(nx);
+                    more.extend(
+                        self.g
+                            .edges_directed(nx, Incoming)
+                            .filter(|e| matches!(e.weight(), CombEdge::Fun))
+                            .map(|e| e.source()),
+                    );
+                }
+            }
+
+            for nx in more {
+                if visited.is_visited(&nx) {
+                    continue;
+                }
+                visited.visit(nx);
+                self.g[nx].redex.set(true);
+            }
+        }
     }
 
     pub fn print_leaves(&self) {
         for nx in self.g.externals(Outgoing) {
-            println!("{}", self.g[nx].expr);
+            println!(
+                "{}: reachable={}",
+                self.g[nx].expr,
+                self.g[nx].reachable.get()
+            );
         }
     }
 }
@@ -140,9 +180,9 @@ impl From<&Program> for CombGraph<Index> {
                     let (expr, i) = expr.unwrap();
                     CombNode {
                         expr: expr.clone(),
+                        reachable: Cell::new(true), // reachable by construction
+                        redex: Cell::new(false),    // assume irreducible at first
                         meta: i,
-                        reachable: true, // by construction
-                        redex: false,    // assume irreducible at first
                     }
                 },
                 |_, &e| e,

@@ -4,8 +4,8 @@ use egui::{
     Color32, FontFamily, FontId, Pos2, Shape, Stroke, Vec2,
 };
 use egui_graphs::{
-    default_edge_transform, to_graph_custom, DefaultEdgeShape, DefaultNodeShape, DisplayEdge,
-    DisplayNode, DrawContext, EdgeProps, Graph, Node, NodeProps,
+    default_edge_transform, to_graph_custom, DisplayEdge, DisplayNode, DrawContext, EdgeProps,
+    Graph, Node, NodeProps,
 };
 use lice::{
     comb::{Expr, Index, Program},
@@ -78,8 +78,9 @@ fn build_meta(
 
 pub fn to_gui_graph(p: &Program) -> GuiGraph {
     let metadata = build_metadata(p);
-    let g = CombGraph::from(p);
-    g.print_leaves();
+    let mut g = CombGraph::from(p);
+    g.mark();
+    g.mark_redexes();
     to_graph_custom(
         &g.g.map(|_, n| n.map(|&i| metadata[i].clone()), |_, &e| e),
         |ni, n| {
@@ -100,61 +101,84 @@ pub fn to_gui_graph(p: &Program) -> GuiGraph {
 }
 
 #[derive(Debug, Clone)]
-pub struct NodeShape(DefaultNodeShape);
+pub struct NodeShape {
+    center: Pos2,
+    selected: bool,
+    dragged: bool,
+    radius: f32,
+    label_text: String,
+    reachable: bool,
+    redex: bool,
+}
 
 #[derive(Debug, Clone)]
-pub struct EdgeShape(DefaultEdgeShape, Color32);
+pub struct EdgeShape {
+    kind: CombEdge,
+    width: f32,
+    tip_size: f32,
+    tip_angle: f32,
+}
+
+impl NodeShape {
+    const RADIUS: f32 = 16.0;
+}
 
 impl From<NodeProps<GuiNode>> for NodeShape {
     fn from(props: NodeProps<GuiNode>) -> Self {
-        Self(DefaultNodeShape {
-            pos: props.location,
+        Self {
+            center: props.location,
             selected: props.selected,
             dragged: props.dragged,
+            radius: Self::RADIUS,
             label_text: props.label,
-            radius: 16.0,
-        })
+            reachable: props.payload.reachable.get(),
+            redex: props.payload.redex.get(),
+        }
+    }
+}
+
+impl EdgeShape {
+    const WIDTH: f32 = 1.0;
+    const TIP_SIZE: f32 = 5.0;
+    const TIP_ANGLE: f32 = std::f32::consts::TAU / 15.0;
+
+    fn color(&self) -> Color32 {
+        match self.kind {
+            CombEdge::Fun => Color32::RED,
+            CombEdge::Arg => Color32::DARK_RED,
+            CombEdge::Ind => Color32::BLUE,
+            CombEdge::Arr => Color32::GREEN,
+        }
     }
 }
 
 impl From<EdgeProps<GuiEdge>> for EdgeShape {
     fn from(props: EdgeProps<GuiEdge>) -> Self {
-        let s = DefaultEdgeShape {
-            order: props.order,
-            selected: props.selected,
-
-            width: 1.,
-            tip_size: 5.,
-            tip_angle: std::f32::consts::TAU / 15.,
-
-            // Only relevant if order is non-zero
-            curve_size: 20.,
-            loop_size: 3.,
-        };
-        Self(
-            s,
-            match props.payload {
-                GuiEdge::Fun => Color32::RED,
-                GuiEdge::Arg => Color32::DARK_RED,
-                GuiEdge::Ind => Color32::BLUE,
-                GuiEdge::Arr => Color32::GREEN,
-            },
-        )
+        Self {
+            width: Self::WIDTH,
+            tip_size: Self::TIP_SIZE,
+            tip_angle: Self::TIP_ANGLE,
+            kind: props.payload,
+        }
     }
 }
 
 impl DisplayNode<GuiNode, GuiEdge, CombTy, CombIx> for NodeShape {
     fn shapes(&mut self, ctx: &DrawContext) -> Vec<egui::Shape> {
-        let style = match self.0.selected || self.0.dragged {
-            true => ctx.ctx.style().visuals.widgets.active,
-            false => ctx.ctx.style().visuals.widgets.inactive,
+        let color = match (self.selected, self.dragged, self.reachable) {
+            (_, _, false) => ctx.ctx.style().visuals.widgets.active.bg_stroke.color,
+            (true, _, _) | (_, true, _) => ctx.ctx.style().visuals.widgets.active.text_color(),
+            _ => ctx.ctx.style().visuals.widgets.inactive.text_color(),
         };
-        let color = style.fg_stroke.color;
-        let center = ctx.meta.canvas_to_screen_pos(self.0.pos);
-        let size = ctx.meta.canvas_to_screen_size(self.0.radius);
+        let center = ctx.meta.canvas_to_screen_pos(self.center);
+        let size = ctx.meta.canvas_to_screen_size(self.radius);
         let galley = ctx.ctx.fonts(|f| {
             f.layout_no_wrap(
-                self.0.label_text.clone(),
+                if self.redex {
+                    format!("[{}]", self.label_text)
+                } else {
+                    self.label_text.clone()
+                },
                 FontId::new(size, FontFamily::Monospace),
                 color,
             )
@@ -164,20 +188,21 @@ impl DisplayNode<GuiNode, GuiEdge, CombTy, CombIx> for NodeShape {
     }
 
     fn update(&mut self, state: &NodeProps<GuiNode>) {
-        <DefaultNodeShape as DisplayNode<GuiNode, GuiEdge, CombTy, CombIx>>::update(
-            &mut self.0,
-            state,
-        );
+        self.center = state.location;
+        self.selected = state.selected;
+        self.dragged = state.dragged;
+        self.label_text = state.label.to_string();
+        self.reachable = state.payload.reachable.get();
+        self.redex = state.payload.redex.get();
     }
 
     fn closest_boundary_point(&self, dir: egui::Vec2) -> egui::Pos2 {
-        <DefaultNodeShape as DisplayNode<GuiNode, GuiEdge, CombTy, CombIx>>::closest_boundary_point(
-            &self.0, dir,
-        )
+        self.center + dir.normalized() * self.radius
     }
 
     fn is_inside(&self, pos: egui::Pos2) -> bool {
-        <DefaultNodeShape as DisplayNode<GuiNode, GuiEdge, CombTy, CombIx>>::is_inside(&self.0, pos)
+        let dir = pos - self.center;
+        dir.length() <= self.radius
     }
 }
 
@@ -188,10 +213,7 @@ impl DisplayEdge<GuiNode, GuiEdge, CombTy, CombIx, NodeShape> for EdgeShape {
         end: &Node<GuiNode, GuiEdge, CombTy, CombIx, NodeShape>,
         ctx: &DrawContext,
     ) -> Vec<egui::Shape> {
-        let color = match self.0.selected {
-            true => ctx.ctx.style().visuals.widgets.active.fg_stroke.color,
-            false => self.1,
-        };
+        let color = self.color();
 
         if start.id() == end.id() {
             // draw loop
@@ -202,12 +224,12 @@ impl DisplayEdge<GuiNode, GuiEdge, CombTy, CombIx, NodeShape> for EdgeShape {
 
                 (connector_right.x - connector_left.x) / 2.
             };
-            let stroke = Stroke::new(self.0.width * ctx.meta.zoom, color);
+            let stroke = Stroke::new(self.width * ctx.meta.zoom, color);
             return vec![shape_looped(
                 ctx.meta.canvas_to_screen_size(node_size),
                 ctx.meta.canvas_to_screen_pos(start.location()),
                 stroke,
-                &self.0,
+                3.,
             )
             .into()];
         }
@@ -219,9 +241,9 @@ impl DisplayEdge<GuiNode, GuiEdge, CombTy, CombIx, NodeShape> for EdgeShape {
         let tip_end = end_connector_point;
 
         let edge_start = start_connector_point;
-        let edge_end = end_connector_point - self.0.tip_size * dir;
+        let edge_end = end_connector_point - self.tip_size * dir;
 
-        let stroke_edge = Stroke::new(self.0.width * ctx.meta.zoom, color);
+        let stroke_edge = Stroke::new(self.width * ctx.meta.zoom, color);
         let stroke_tip = Stroke::new(0., color);
 
         let line = Shape::line_segment(
@@ -232,8 +254,8 @@ impl DisplayEdge<GuiNode, GuiEdge, CombTy, CombIx, NodeShape> for EdgeShape {
             stroke_edge,
         );
 
-        let tip_start_1 = tip_end - self.0.tip_size * rotate_vector(dir, self.0.tip_angle);
-        let tip_start_2 = tip_end - self.0.tip_size * rotate_vector(dir, -self.0.tip_angle);
+        let tip_start_1 = tip_end - self.tip_size * rotate_vector(dir, self.tip_angle);
+        let tip_start_2 = tip_end - self.tip_size * rotate_vector(dir, -self.tip_angle);
 
         // draw tips for directed edges
 
@@ -250,21 +272,19 @@ impl DisplayEdge<GuiNode, GuiEdge, CombTy, CombIx, NodeShape> for EdgeShape {
     }
 
     fn update(&mut self, state: &EdgeProps<GuiEdge>) {
-        <DefaultEdgeShape as DisplayEdge<GuiNode, GuiEdge, CombTy, CombIx, NodeShape>>::update(
-            &mut self.0,
-            state,
-        );
+        // We don't need the user to interact with edges
+        // self.selected = state.selected;
+        self.kind = state.payload;
     }
 
     fn is_inside(
         &self,
-        start: &Node<GuiNode, GuiEdge, CombTy, CombIx, NodeShape>,
-        end: &Node<GuiNode, GuiEdge, CombTy, CombIx, NodeShape>,
-        pos: egui::Pos2,
+        _start: &Node<GuiNode, GuiEdge, CombTy, CombIx, NodeShape>,
+        _end: &Node<GuiNode, GuiEdge, CombTy, CombIx, NodeShape>,
+        _pos: egui::Pos2,
     ) -> bool {
-        <DefaultEdgeShape as DisplayEdge<GuiNode, GuiEdge, CombTy, CombIx, NodeShape>>::is_inside(
-            &self.0, start, end, pos,
-        )
+        // Kind of fussy, and not useful
+        false
     }
 }
 
@@ -272,7 +292,7 @@ fn shape_looped(
     node_size: f32,
     node_center: Pos2,
     stroke: Stroke,
-    e: &DefaultEdgeShape,
+    loop_size: f32,
 ) -> CubicBezierShape {
     let center_horizon_angle = std::f32::consts::PI / 4.;
     let y_intersect = node_center.y - node_size * center_horizon_angle.sin();
@@ -286,7 +306,7 @@ fn shape_looped(
         y_intersect,
     );
 
-    let loop_size = node_size * (e.loop_size + e.order as f32);
+    let loop_size = node_size * loop_size;
 
     let control_point1 = Pos2::new(node_center.x + loop_size, node_center.y - loop_size);
     let control_point2 = Pos2::new(node_center.x - loop_size, node_center.y - loop_size);

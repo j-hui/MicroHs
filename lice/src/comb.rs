@@ -107,6 +107,32 @@ pub enum Combinator {
     CCB,
 }
 
+impl Combinator {
+    pub fn arity(&self) -> usize {
+        match self {
+            Combinator::S => 3,
+            Combinator::K => 2,
+            Combinator::I => 1,
+            Combinator::B => 3,
+            Combinator::C => 3,
+            Combinator::A => 2,
+            Combinator::Y => 1,
+            Combinator::SS => 4,
+            Combinator::BB => 4,
+            Combinator::CC => 4,
+            Combinator::P => 3,
+            Combinator::R => 3,
+            Combinator::O => 3,
+            Combinator::U => 2,
+            Combinator::Z => 3,
+            Combinator::K2 => 3,
+            Combinator::K3 => 4,
+            Combinator::K4 => 5,
+            Combinator::CCB => 4,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
 pub enum BuiltIn {
     #[display("error")]
