@@ -38,13 +38,13 @@ pub struct CombGraph<T> {
     pub root: NodeIndex,
 }
 
-impl Program {
-    pub fn to_graph(&self) -> CombGraph<Index> {
+impl From<&Program> for CombGraph<Index> {
+    fn from(program: &Program) -> Self {
         let mut index = Vec::new();
-        index.resize(self.body.len(), None);
+        index.resize(program.body.len(), None);
 
         let mut g = StableGraph::new();
-        for (i, cell) in self.body.iter().enumerate() {
+        for (i, cell) in program.body.iter().enumerate() {
             let this = if let Some(this) = index[i] {
                 *g.node_weight_mut(this).unwrap() = Some((cell, i));
                 this
@@ -71,7 +71,7 @@ impl Program {
                     g.add_edge(this, a, CombEdge::Arg);
                 }
                 Cell::Ref(r) => {
-                    let d = self.defs[*r];
+                    let d = program.defs[*r];
 
                     let d = index[d].unwrap_or_else(|| {
                         let that = g.add_node(None);
@@ -96,7 +96,7 @@ impl Program {
                 },
                 |_, &e| e,
             ),
-            root: index[self.root].unwrap(),
+            root: index[program.root].unwrap(),
         }
     }
 }

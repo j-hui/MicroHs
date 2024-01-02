@@ -9,17 +9,16 @@ use crate::gui::{to_gui_graph, EdgeShape, GuiGraph, NodeShape};
 
 pub struct CombApp {
     g: GuiGraph,
-    filename: PathBuf,
 }
 
 impl CombApp {
     pub fn new(_: &CreationContext<'_>, filename: PathBuf) -> Self {
         let mut buf = String::new();
-        let mut f = File::open(&filename).unwrap();
+        let mut f = File::open(filename).unwrap();
         f.read_to_string(&mut buf).unwrap();
         let c = CombFile::from_str(&buf).unwrap();
-        let g = to_gui_graph(c.program);
-        Self { g, filename }
+        let g = to_gui_graph(&c.program);
+        Self { g }
     }
 
     pub fn run(filename: PathBuf) {
