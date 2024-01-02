@@ -67,7 +67,7 @@ pub enum Expr {
     Unknown(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Display, FromStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
 #[display("{0}")]
 pub enum Prim {
     Combinator(Combinator),
@@ -80,7 +80,7 @@ pub enum Prim {
 }
 
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Debug, Clone, PartialEq, Eq, Display, FromStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
 pub enum Combinator {
     S,
     K,
@@ -107,7 +107,7 @@ pub enum Combinator {
     CCB,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Display, FromStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
 pub enum BuiltIn {
     #[display("error")]
     Error,
@@ -131,7 +131,7 @@ pub enum BuiltIn {
     Rnf,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Display, FromStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
 pub enum Arith {
     #[display("+")]
     Add,
@@ -189,7 +189,7 @@ pub enum Arith {
     ToInt,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Display, FromStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
 pub enum Pointer {
     #[display("p==")]
     PEq,
@@ -203,7 +203,7 @@ pub enum Pointer {
     ToPtr,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Display, FromStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
 pub enum IO {
     #[display("IO.>>=")]
     Bind,
@@ -235,7 +235,7 @@ pub enum IO {
     DynSym,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Display, FromStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
 pub enum FArith {
     #[display("f+")]
     FAdd,
@@ -268,7 +268,7 @@ pub enum FArith {
     FRead,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Display, FromStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
 pub enum Array {
     #[display("A.alloc")]
     Alloc,
