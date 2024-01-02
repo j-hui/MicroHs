@@ -83,24 +83,27 @@ impl<T> CombGraph<T> {
             for _ in 0..comb.arity() {
                 let nodes: Vec<NodeIndex> = mem::take(&mut more);
                 for nx in nodes {
-                    if visited.is_visited(&nx) {
+                    if !visited.visit(nx) {
                         continue;
                     }
-                    visited.visit(nx);
-                    more.extend(
-                        self.g
-                            .edges_directed(nx, Incoming)
-                            .filter(|e| matches!(e.weight(), CombEdge::Fun))
-                            .map(|e| e.source()),
-                    );
+                    let mut in_edges: Vec<_> = self.g.edges_directed(nx, Incoming).collect();
+                    while let Some(e) = in_edges.pop() {
+                        match e.weight() {
+                            CombEdge::Fun => more.push(e.source()),
+                            CombEdge::Ind => {
+                                let ix = e.source();
+                                assert!(matches!(self.g[ix].expr, Expr::Ref(_)));
+                                in_edges.extend(self.g.edges_directed(ix, Incoming));
+                            }
+                            _ => continue,
+                        }
+                    }
                 }
             }
 
             for nx in more {
-                if visited.is_visited(&nx) {
-                    continue;
-                }
-                visited.visit(nx);
+                // No need to check visited here, already monotonic
+                // println!("Found redex for {}", comb);
                 self.g[nx].redex.set(true);
             }
         }
