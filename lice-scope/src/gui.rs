@@ -8,7 +8,7 @@ use egui_graphs::{
     Graph, Node, NodeProps,
 };
 use lice::{
-    comb::{Expr, Index, Program},
+    comb::{Expr, Index, Program, Combinator},
     graph::{CombEdge, CombGraph, CombIx, CombNode, CombTy},
 };
 
@@ -108,7 +108,7 @@ pub struct NodeShape {
     radius: f32,
     label_text: String,
     reachable: bool,
-    redex: bool,
+    redex: Option<Combinator>,
 }
 
 #[derive(Debug, Clone)]
@@ -174,7 +174,7 @@ impl DisplayNode<GuiNode, GuiEdge, CombTy, CombIx> for NodeShape {
         let size = ctx.meta.canvas_to_screen_size(self.radius);
         let galley = ctx.ctx.fonts(|f| {
             f.layout_no_wrap(
-                if self.redex {
+                if self.redex.is_some() {
                     format!("[{}]", self.label_text)
                 } else {
                     self.label_text.clone()

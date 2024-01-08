@@ -1,6 +1,6 @@
 use std::{cell::Cell, mem};
 
-use crate::comb::{Expr, Index, Prim, Program};
+use crate::comb::{Combinator, Expr, Index, Prim, Program};
 use petgraph::{
     stable_graph::{DefaultIx, NodeIndex, StableGraph},
     visit::{Dfs, EdgeRef, VisitMap, Visitable},
@@ -12,7 +12,7 @@ use petgraph::{
 pub struct CombNode<T> {
     pub expr: Expr,
     pub reachable: Cell<bool>,
-    pub redex: Cell<bool>,
+    pub redex: Cell<Option<Combinator>>,
     pub meta: T,
 }
 
@@ -103,8 +103,8 @@ impl<T> CombGraph<T> {
 
             for nx in more {
                 // No need to check visited here, already monotonic
-                // println!("Found redex for {}", comb);
-                self.g[nx].redex.set(true);
+                println!("Found redex for {}", comb);
+                self.g[nx].redex.set(Some(*comb));
             }
         }
     }
@@ -184,7 +184,7 @@ impl From<&Program> for CombGraph<Index> {
                     CombNode {
                         expr: expr.clone(),
                         reachable: Cell::new(true), // reachable by construction
-                        redex: Cell::new(false),    // assume irreducible at first
+                        redex: Cell::new(None),    // assume irreducible at first
                         meta: i,
                     }
                 },
