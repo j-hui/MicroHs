@@ -2,10 +2,10 @@ use std::{cell::Cell, mem};
 
 use crate::comb::{Combinator, Expr, Index, Prim, Program};
 use petgraph::{
-    stable_graph::{DefaultIx, NodeIndex, StableGraph},
+    stable_graph::{self, DefaultIx, StableGraph},
     visit::{Dfs, EdgeRef, VisitMap, Visitable},
     Directed,
-    Direction::{Incoming, Outgoing},
+    Direction::{self, Incoming, Outgoing},
 };
 
 #[derive(Debug, Clone)]
@@ -39,17 +39,22 @@ pub type CombIx = DefaultIx;
 
 pub type CombTy = Directed;
 
+pub type NodeIndex = stable_graph::NodeIndex<CombIx>;
+
+pub type EdgeReference<'a> = stable_graph::EdgeReference<'a, CombEdge, CombIx>;
+
 pub struct CombGraph<T> {
     pub g: StableGraph<CombNode<T>, CombEdge, CombTy, CombIx>,
 
     pub root: NodeIndex,
 }
 
-impl<T> CombGraph<T> {
-    /// Mark all unreachable nodes as such.
+impl<T: Clone> CombGraph<T> {
+    /// Mark all unreachable nodes as such, and return the number of reachable nodes.
     ///
     /// First marks everything unreachable, then marks reachable nodes through DFS.
-    pub fn mark(&mut self) {
+    pub fn mark(&mut self) -> usize {
+        let mut size = 0;
         for n in self.g.node_weights_mut() {
             n.reachable.set(false);
         }
@@ -57,17 +62,21 @@ impl<T> CombGraph<T> {
         let mut dfs = Dfs::new(&self.g, self.root);
         while let Some(nx) = dfs.next(&self.g) {
             self.g[nx].reachable.set(true);
+            size += 1;
         }
+        size
     }
 
-    /// Ye goode olde mark und sweepe.
+    /// Ye goode olde mark und sweepe. Returns the number of sweeped nodes.
     ///
-    /// Note that this won't actually free up any memory, since this is a `StableGraph`.
+    /// Note that this won't actually free up any `petgraph` memory, since this is a `StableGraph`.
     /// But we will assume this is fine since this data structure is primarily meant for
     /// (memory-hungry) compile-time analysis anyway.
-    pub fn gc(&mut self) {
+    pub fn gc(&mut self) -> usize {
+        let old_size = self.g.node_count();
         self.mark();
         self.g.retain_nodes(|g, nx| g[nx].reachable.get());
+        old_size - self.g.node_count()
     }
 
     pub fn mark_redexes(&mut self) {
@@ -103,8 +112,160 @@ impl<T> CombGraph<T> {
 
             for nx in more {
                 // No need to check visited here, already monotonic
-                println!("Found redex for {}", comb);
+                // println!("Found redex for {}", comb);
                 self.g[nx].redex.set(Some(*comb));
+            }
+        }
+    }
+
+    pub fn follow_indirection(&self, n: NodeIndex) -> NodeIndex {
+        let mut tgt = n;
+        while matches!(self.g[tgt].expr, Expr::Ref(_)) {
+            let mut outgoing = self.g.edges_directed(tgt, Outgoing);
+
+            tgt = outgoing
+                .next()
+                .expect("Ref node should have at least one out-edge")
+                .target();
+
+            assert!(
+                outgoing.next().is_none(),
+                "Ref node should have exactly one out-edge"
+            );
+        }
+        tgt
+    }
+
+    pub fn forward_indirections(&mut self) {
+        self.root = self.follow_indirection(self.root);
+        let mut dfs = Dfs::new(&self.g, self.root);
+        while let Some(nx) = dfs.next(&self.g) {
+            if let Expr::Ref(_) = self.g[nx].expr {
+                // Skip indirection nodes
+                continue;
+            }
+
+            let mut changes = Vec::new();
+
+            for e in self.g.edges_directed(nx, Outgoing) {
+                if !matches!(self.g[e.target()].expr, Expr::Ref(_)) {
+                    continue;
+                }
+                let tgt = self.follow_indirection(e.target());
+
+                changes.push((e.id(), *e.weight(), tgt));
+            }
+
+            for (e, w, tgt) in &changes {
+                self.g.remove_edge(*e);
+
+                if matches!(self.g[*tgt].expr, Expr::App(_, _, _) | Expr::Array(_, _)) {
+                    // Non-leaf node; redirect pointer
+                    // println!(
+                    //     "Forwarding indirection to non-leaf node: {}",
+                    //     self.g[*tgt].expr
+                    // );
+                    self.g.add_edge(nx, *tgt, *w);
+                } else {
+                    // Leaf node; just clone it, to keep the graph tidy
+                    // println!("Forwarding indirection to leaf node: {}", self.g[*tgt].expr);
+                    let tgt = self.g.add_node(self.g[*tgt].clone());
+                    self.g.add_edge(nx, tgt, *w);
+                }
+            }
+        }
+    }
+
+    pub fn collect_redex(&self, top: NodeIndex, comb: Combinator) -> Vec<NodeIndex> {
+        let mut args = Vec::new();
+
+        let mut app = top;
+        for _ in 0..comb.arity() {
+            assert!(
+                matches!(self.g[app].expr, Expr::App(_, _, _)),
+                "expected @ node in redex, instead found {}",
+                self.g[app].expr
+            );
+
+            let mut outgoing = self.g.edges_directed(app, Outgoing);
+            let first = outgoing
+                .next()
+                .expect("App node should have at least one out-edge");
+            let second = outgoing
+                .next()
+                .expect("App node should have at least two out-edges");
+            assert!(
+                outgoing.next().is_none(),
+                "App node should have exactly two out-edges"
+            );
+
+            match (first.weight(), second.weight()) {
+                (CombEdge::Fun, CombEdge::Arg) => {
+                    app = first.target();
+                    args.push(second.target());
+                }
+                (CombEdge::Arg, CombEdge::Fun) => {
+                    app = second.target();
+                    args.push(first.target());
+                }
+                fs => {
+                    panic!(
+                        "App node should have a Fun out-edge and an Arg out-edge, instead found {fs:#?}"
+                    );
+                }
+            }
+        }
+
+        let Expr::Prim(prim) = self.g[app].expr else {
+            panic!(
+                "expected redex chain to lead to primitive, got {} instead",
+                self.g[app].expr
+            );
+        };
+        assert_eq!(prim, Prim::Combinator(comb));
+        args.push(app);
+        args.reverse();
+        args
+    }
+
+    pub fn remove_edges(&mut self, nx: NodeIndex, dir: Direction) {
+        let old_edges: Vec<_> = self.g.edges_directed(nx, dir).map(|e| e.id()).collect();
+        for e in old_edges {
+            self.g.remove_edge(e);
+        }
+    }
+
+    pub fn set_app(&mut self, nx: NodeIndex, f: NodeIndex, a: NodeIndex) {
+        self.remove_edges(nx, Outgoing);
+        self.g[nx].expr = Expr::new_app(); // TODO: add valid indices if possible?
+        self.g.add_edge(nx, f, CombEdge::Fun);
+        self.g.add_edge(nx, a, CombEdge::Arg);
+    }
+
+    pub fn set_ind(&mut self, nx: NodeIndex, tgt: NodeIndex) {
+        self.remove_edges(nx, Outgoing);
+        self.g[nx].expr = Expr::new_ref(); // TODO: add valid indices if possible?
+        self.g.add_edge(nx, tgt, CombEdge::Ind);
+    }
+
+    pub fn reduce_trivial(&mut self) {
+        let mut dfs = Dfs::new(&self.g, self.root);
+        while let Some(nx) = dfs.next(&self.g) {
+            let Some(comb) = self.g[nx].redex.get() else {
+                continue;
+            };
+            let args = self.collect_redex(nx, comb);
+            match comb {
+                Combinator::I => self.set_ind(nx, args[1]),
+                Combinator::A => self.set_ind(nx, args[2]),
+                Combinator::K => self.set_ind(nx, args[1]),
+                Combinator::K2 => self.set_ind(nx, args[1]),
+                Combinator::K3 => self.set_ind(nx, args[1]),
+                Combinator::K4 => self.set_ind(nx, args[1]),
+                Combinator::Z => self.set_app(nx, args[1], args[2]),
+                Combinator::U => self.set_app(nx, args[2], args[1]),
+                Combinator::Y => self.set_app(nx, args[1], nx),
+                _ => continue, // Not going to bother
             }
         }
     }
@@ -184,7 +345,7 @@ impl From<&Program> for CombGraph<Index> {
                     CombNode {
                         expr: expr.clone(),
                         reachable: Cell::new(true), // reachable by construction
-                        redex: Cell::new(None),    // assume irreducible at first
+                        redex: Cell::new(None),     // assume irreducible at first
                         meta: i,
                     }
                 },

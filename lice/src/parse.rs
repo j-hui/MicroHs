@@ -1,5 +1,5 @@
 //! Combinator file parser.
-use crate::comb::{CombFile, Expr, Index, Label, Prim, Program};
+use crate::comb::{CombFile, Expr, Index, Label, Prim, Program, NIL_INDEX};
 use nom::{
     branch::alt,
     bytes::complete::{is_not, tag},
@@ -14,8 +14,6 @@ use std::str::FromStr;
 
 /// The result of parsing. A parser monad, even. Typedef'd here for convenience.
 type Parse<'a, T> = IResult<&'a str, T>;
-
-const NIL_INDEX: Index = Index::MAX;
 
 fn uinteger(i: &str) -> Parse<usize> {
     map_res(digit1, |s: &str| s.parse::<usize>()).parse(i)

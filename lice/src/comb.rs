@@ -9,6 +9,8 @@ pub type Label = usize;
 pub type Int = i64;
 pub type Float = f64;
 
+pub(crate) const NIL_INDEX: Index = Index::MAX;
+
 #[derive(Debug, Clone)]
 pub struct CombFile {
     // (Major, minor)
@@ -65,6 +67,16 @@ pub enum Expr {
     /// Default case. Shouldn't appear, but you know, life happens.
     #[display("?!{0}")]
     Unknown(String),
+}
+
+impl Expr {
+    pub(crate) fn new_app() -> Self {
+        Self::App(NIL_INDEX, None, NIL_INDEX)
+    }
+
+    pub(crate) fn new_ref() -> Self {
+        Self::Ref(NIL_INDEX)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
